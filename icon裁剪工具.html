@@ -535,102 +535,99 @@ input[type="range"] { flex: 1; accent-color: #7c3aed; }
 .empty-rlist .er-icon { font-size: 28px; margin-bottom: 8px; }
 
 
-/* ── UPGRADE: 右侧列表紧凑化 + 自动匹配按钮 ── */
-.rpanel {
-  width: 286px;
-  min-width: 286px;
+/* ── UPGRADE: 左侧操作面板紧凑化 ── */
+aside.panel {
+  width: 238px;
+  min-width: 238px;
+  padding: 9px 10px;
+  gap: 9px;
 }
-.rpanel-head {
-  padding: 9px 10px 7px;
-}
-.rpanel-body {
-  padding: 4px 0;
-}
-.rpanel-foot {
-  padding: 7px 10px;
-}
-.rsel-item {
-  gap: 6px;
-  padding: 4px 8px;
-  min-height: 42px;
-}
-.rsel-item.active {
-  padding-left: 6px;
-}
-.rsel-item .rdrag {
-  font-size: 12px;
-  padding: 1px;
-}
-.rsel-item canvas {
-  width: 28px !important;
-  height: 28px !important;
-  border-radius: 3px;
-}
-.rsel-item .rmain {
-  gap: 0;
-}
-.rsel-item .rname-row {
-  gap: 4px;
-}
-.rsel-item .rname-input {
-  font-size: 11.5px;
-  padding: 1px 3px;
-  line-height: 18px;
-}
-.rsel-item .rsize {
-  font-size: 9.5px;
-  line-height: 13px;
-  opacity: .78;
-}
-.rsel-item .rdel {
-  font-size: 12px;
-  padding: 1px 3px;
-}
-.naming-panel {
-  padding: 7px 9px;
-}
-.naming-panel .np-head {
+.panel .section-title {
   margin-bottom: 5px;
-  font-size: 10.5px;
+  font-size: 8.5px;
 }
-.naming-panel textarea {
-  min-height: 42px;
-  max-height: 78px;
-  padding: 5px 6px;
-  font-size: 10.5px;
+.panel .section-title::before {
+  height: 8px;
 }
-.naming-panel .np-actions {
-  gap: 4px;
-  margin-top: 5px;
+.panel .drop-zone {
+  padding: 10px 8px;
+  border-radius: 8px;
 }
-.naming-panel .np-actions .btn {
-  min-width: 62px;
-  padding: 4px 6px;
-  font-size: 10px;
+.panel .drop-zone .dz-icon {
+  font-size: 20px;
+  margin-bottom: 2px;
 }
-.naming-panel .np-tip {
-  margin-top: 3px;
-  font-size: 9.5px;
+.panel .drop-zone p {
+  font-size: 11px;
   line-height: 1.35;
 }
-.chip-pool {
-  margin-top: 5px;
-  padding: 4px;
-  gap: 3px;
-  min-height: 24px;
-  max-height: 78px;
-}
-.name-chip {
-  padding: 2px 6px;
+#imgInfo {
+  padding: 5px 8px;
   font-size: 10.5px;
 }
-.empty-rlist {
-  padding: 22px 12px;
+.panel label.field-label {
+  font-size: 10px;
+  margin-bottom: 2px;
+}
+.panel .field-row {
+  gap: 6px;
+}
+.panel .field-row[style*="margin-top:8px"],
+.panel #resizeInputs {
+  margin-top: 5px !important;
+}
+.panel input[type="number"] {
+  width: 58px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.panel input[type="text"],
+.panel select {
+  padding: 5px 7px;
+  font-size: 12px;
+}
+.panel .btn {
+  padding: 6px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.panel .zoom-bar {
+  gap: 6px;
+}
+.panel .zoom-bar label {
+  font-size: 10px;
+}
+.panel .zoom-bar .zoom-val {
+  font-size: 11px;
+  width: 32px;
+}
+.panel #fitBtn,
+.panel #addManualBtn,
+.panel #exportBtn {
+  margin-top: 6px !important;
+}
+.panel .divider {
+  margin: -1px -10px;
+}
+.panel .sq-actions {
+  gap: 5px;
+}
+.panel .sq-actions .btn {
+  padding: 5px 6px;
   font-size: 11px;
 }
-.empty-rlist .er-icon {
-  font-size: 22px;
-  margin-bottom: 4px;
+.panel p {
+  margin-top: 4px !important;
+  font-size: 10px !important;
+  line-height: 1.35 !important;
+}
+.panel .checkbox-row {
+  font-size: 11px;
+  gap: 5px;
+}
+.panel .checkbox-row input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
 }
 
 /* toast */
