@@ -2329,46 +2329,18 @@ window.addEventListener('DOMContentLoaded', () => {
   const origRender = window.render;
   window.render = function() {
     origRender && origRender.apply(this, arguments);
-    if (window.srcImage) {
-      sbImg.textContent = window.srcImage.width + ' × ' + window.srcImage.height;
+    if (srcImage) {
+      sbImg.textContent = srcImage.width + ' × ' + srcImage.height;
     }
-    sbZoom.textContent = Math.round((window.zoom || 1) * 100) + '%';
+    sbZoom.textContent = Math.round((zoom || 1) * 100) + '%';
   };
 
   const origDraw = window.drawSelections;
   window.drawSelections = function() {
     origDraw && origDraw.apply(this, arguments);
-    const sels = window.selections || [];
+    const sels = selections || [];
     sbSel.textContent = sels.length;
-    const ai = window.activeIdx;
-    if (ai >= 0 && ai < sels.length) {
-      const s = sels[ai];
-      sbActive.textContent = '#' + (ai+1) + '  ' + s.x + ',' + s.y + '  ' + s.w + '×' + s.h;
-    } else {
-      sbActive.textContent = '—';
-    }
-  };
-})();
-</script>
-
-</body>
-</html>
-= window.activeIdx;
-    if (ai >= 0 && ai < sels.length) {
-      const s = sels[ai];
-      sbActive.textContent = '#' + (ai+1) + '  ' + s.x + ',' + s.y + '  ' + s.w + '×' + s.h;
-    } else {
-      sbActive.textContent = '—';
-    }
-  };
-})();
-</script>
-
-</body>
-</html>
-| [];
-    sbSel.textContent = sels.length;
-    const ai = window.activeIdx;
+    const ai = activeIdx;
     if (ai >= 0 && ai < sels.length) {
       const s = sels[ai];
       sbActive.textContent = '#' + (ai+1) + '  ' + s.x + ',' + s.y + '  ' + s.w + '×' + s.h;
