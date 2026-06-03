@@ -508,7 +508,7 @@ input[type="range"] { flex: 1; accent-color: #7c3aed; }
   overflow-y: auto;
 }
 .chip-pool.empty::before {
-  content: "AI/快速解析后，名字出现在这里，可拖到右侧选区";
+  content: "AI/OCR 解析后，名字出现在这里，可拖到右侧选区";
   color: #3a3a50; font-size: 10px; font-style: italic;
   padding: 4px; width: 100%; text-align: center;
 }
@@ -580,6 +580,13 @@ aside.panel {
   width: 58px;
   padding: 4px 6px;
   font-size: 12px;
+}
+.panel .coord-row {
+  gap: 4px;
+}
+.panel .coord-row input[type="number"] {
+  width: 48px;
+  padding: 4px 4px;
 }
 .panel input[type="text"],
 .panel select {
@@ -962,7 +969,7 @@ select {
     <!-- 手动坐标显示（实时更新） -->
     <div>
       <div class="section-title">当前选区坐标（实时）</div>
-      <div class="field-row">
+      <div class="field-row coord-row">
         <div>
           <label class="field-label">X</label>
           <input type="number" id="manX" value="0" min="0">
@@ -971,13 +978,10 @@ select {
           <label class="field-label">Y</label>
           <input type="number" id="manY" value="0" min="0">
         </div>
-      </div>
-      <div class="field-row" style="margin-top:8px;">
         <div>
           <label class="field-label">宽</label>
           <input type="number" id="manW" value="0" min="1">
         </div>
-        <div class="field-sep">×</div>
         <div>
           <label class="field-label">高</label>
           <input type="number" id="manH" value="0" min="1">
@@ -1074,8 +1078,6 @@ select {
         <div class="np-actions">
           <button class="btn btn-primary" id="aiParseBtn" title="调用 Venus LLM 智能提取名字（需内网）">🤖 AI 解析</button>
           <button class="btn btn-primary" id="ocrParseBtn" title="截图/图片 OCR 识别（粘贴或选择文件，需内网）">📷 截图识别</button>
-          <button class="btn btn-secondary" id="quickParseBtn" title="本地正则解析，无需网络">快速解析</button>
-          <button class="btn btn-secondary" id="autoAssignBtn" title="按顺序把名字池分配到选区" disabled>↦ 顺序分配</button>
           <button class="btn btn-secondary" id="autoMatchBtn" title="用视觉模型识别选区缩略图，自动匹配/生成茬点名字" disabled>✨ 智能匹配</button>
           <button class="btn btn-warn" id="clearNamesBtn" title="清空所有选区的名字">清空名字</button>
         </div>
@@ -1689,13 +1691,6 @@ document.getElementById('npHead').addEventListener('click', () => {
   document.getElementById('npToggle').textContent = panel.classList.contains('collapsed') ? '▶' : '▼';
 });
 
-// 快速解析（本地正则）
-document.getElementById('quickParseBtn').addEventListener('click', () => {
-  const raw = document.getElementById('nameRawText').value;
-  const names = quickParse(raw);
-  if (!names.length) { showToast('未解析到任何名字，请检查文本格式'); return; }
-  applyNamesToPool(names);
-});
 
 // AI 解析
 document.getElementById('aiParseBtn').addEventListener('click', async () => {
@@ -1805,49 +1800,19 @@ document.getElementById('nameRawText').addEventListener('paste', async (e) => {
     try {
       const names = await aiParse(raw);
       if (!names.length) {
-        showToast('AI 未返回有效名字，尝试快速解析…');
-        const fallback = quickParse(raw);
-        if (fallback.length) {
-          applyNamesToPool(fallback);
-          showToast(`快速解析完成，共 ${fallback.length} 个名字`);
-        }
+        showToast('AI 未返回有效名字，请检查文本内容');
         return;
       }
       applyNamesToPool(names);
       showToast(`🤖 粘贴自动解析完成，共 ${names.length} 个名字`);
     } catch (err) {
-      // AI 失败时 fallback 到本地正则解析
-      console.warn('[Auto Parse] AI failed, fallback to quickParse:', err);
-      const fallback = quickParse(raw);
-      if (fallback.length) {
-        applyNamesToPool(fallback);
-        showToast(`AI 不可用，已用快速解析：${fallback.length} 个名字`);
-      } else {
-        showToast('解析失败：' + (err.message || '请检查内网连接'));
-      }
+      console.warn('[Auto Parse] AI failed:', err);
+      showToast('解析失败：' + (err.message || '请检查内网连接'));
     } finally {
       btn.disabled = false;
       btn.textContent = '🤖 AI 解析';
     }
   }, 50);
-});
-
-// 顺序分配
-document.getElementById('autoAssignBtn').addEventListener('click', () => {
-  const unassigned = namePool.filter(n => !n.assigned);
-  if (!unassigned.length) { showToast('名字池已全部分配完毕'); return; }
-  let assigned = 0;
-  for (let i = 0; i < selections.length && assigned < unassigned.length; i++) {
-    if (!selections[i].name) {
-      selections[i].name = unassigned[assigned].text;
-      unassigned[assigned].assigned = true;
-      assigned++;
-    }
-  }
-  updateSelList();
-  renderChipPool();
-  updateNpTip();
-  showToast(`已顺序分配 ${assigned} 个名字`);
 });
 
 
@@ -1958,15 +1923,6 @@ document.getElementById('clearNamesBtn').addEventListener('click', () => {
   updateNpTip();
   showToast('已清空所有选区名字');
 });
-
-// ── 快速解析（本地正则）──
-function quickParse(text) {
-  const NOISE = /^(\d+|音效|下载全部附件|添加茬点|茬点列表|共\s*\d+|附件|\s*)$/;
-  return text.split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !NOISE.test(l))
-    .filter(l => !/^共\s*\d+\s*个/.test(l));
-}
 
 // ── 通用 Venus 调用（带模型 fallback）──
 // modelList: 模型尝试顺序数组
@@ -2092,10 +2048,9 @@ function fileToDataURL(file) {
 // ── 应用名字到 namePool 并渲染 ──
 function applyNamesToPool(names) {
   namePool = names.map(t => ({ text: t, assigned: false }));
-  document.getElementById('autoAssignBtn').disabled = false;
   renderChipPool();
   updateNpTip();
-  showToast(`已解析 ${names.length} 个名字，可拖拽分配或点击「顺序分配」`);
+  showToast(`已解析 ${names.length} 个名字，可拖拽分配或点击「智能匹配」`);
 }
 
 // ── 渲染 chip 池 ──
@@ -2384,6 +2339,34 @@ window.addEventListener('DOMContentLoaded', () => {
   window.drawSelections = function() {
     origDraw && origDraw.apply(this, arguments);
     const sels = window.selections || [];
+    sbSel.textContent = sels.length;
+    const ai = window.activeIdx;
+    if (ai >= 0 && ai < sels.length) {
+      const s = sels[ai];
+      sbActive.textContent = '#' + (ai+1) + '  ' + s.x + ',' + s.y + '  ' + s.w + '×' + s.h;
+    } else {
+      sbActive.textContent = '—';
+    }
+  };
+})();
+</script>
+
+</body>
+</html>
+= window.activeIdx;
+    if (ai >= 0 && ai < sels.length) {
+      const s = sels[ai];
+      sbActive.textContent = '#' + (ai+1) + '  ' + s.x + ',' + s.y + '  ' + s.w + '×' + s.h;
+    } else {
+      sbActive.textContent = '—';
+    }
+  };
+})();
+</script>
+
+</body>
+</html>
+| [];
     sbSel.textContent = sels.length;
     const ai = window.activeIdx;
     if (ai >= 0 && ai < sels.length) {
