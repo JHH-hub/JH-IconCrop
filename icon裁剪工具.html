@@ -1152,6 +1152,24 @@ const resizeInputs= document.getElementById('resizeInputs');
 
 const ctx = mainCanvas.getContext('2d');
 
+function setCanvasSmoothing(ctx, enabled, quality = 'high') {
+  if (!ctx) return;
+  ctx.imageSmoothingEnabled = enabled;
+  ctx.webkitImageSmoothingEnabled = enabled;
+  ctx.mozImageSmoothingEnabled = enabled;
+  ctx.msImageSmoothingEnabled = enabled;
+  if (enabled && 'imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = quality;
+}
+
+function setPixelSharp(ctx) {
+  setCanvasSmoothing(ctx, false);
+}
+
+function setHighQualityScale(ctx) {
+  setCanvasSmoothing(ctx, true, 'high');
+}
+setPixelSharp(ctx);
+
 // toggle resize inputs
 resizeCheck.addEventListener('change', () => {
   resizeInputs.style.opacity = resizeCheck.checked ? '1' : '.35';
@@ -1270,6 +1288,7 @@ function render() {
 
   mainCanvas.width  = w;
   mainCanvas.height = h;
+  setPixelSharp(ctx); // canvas 尺寸变化会重置 context，预览也保持锐利
   canvasWrap.style.width  = w + 'px';
   canvasWrap.style.height = h + 'px';
 
@@ -1602,6 +1621,7 @@ function updateSelList() {
     thumb.style.cssText = 'width:36px;height:36px;flex-shrink:0;border-radius:4px;image-rendering:pixelated;';
     if (srcImage) {
       const tc = thumb.getContext('2d');
+      setPixelSharp(tc);
       tc.drawImage(srcImage, sel.x, sel.y, sel.w, sel.h, 0, 0, 36, 36);
     }
 
@@ -2118,6 +2138,75 @@ function updateNpTip() {
 // ════════════════════════════════
 // EXPORT
 // ════════════════════════════════
+function normalizeExportRect(sel) {
+  const maxX = Math.max(0, srcImage.width - 1);
+  const maxY = Math.max(0, srcImage.height - 1);
+  const x = Math.min(Math.max(0, Math.round(sel.x)), maxX);
+  const y = Math.min(Math.max(0, Math.round(sel.y)), maxY);
+  const w = Math.max(1, Math.min(Math.round(sel.w), srcImage.width - x));
+  const h = Math.max(1, Math.min(Math.round(sel.h), srcImage.height - y));
+  return { x, y, w, h };
+}
+
+function drawSelectionToCanvas(sel, outCanvas, outCtx, outW, outH) {
+  const r = normalizeExportRect(sel);
+  outW = Math.max(1, Math.round(outW));
+  outH = Math.max(1, Math.round(outH));
+  outCanvas.width = outW;
+  outCanvas.height = outH;
+
+  // 不缩放：逐像素裁出，避免任何浏览器插值差异
+  if (r.w === outW && r.h === outH) {
+    setPixelSharp(outCtx);
+    outCtx.clearRect(0, 0, outW, outH);
+    outCtx.drawImage(srcImage, r.x, r.y, r.w, r.h, 0, 0, outW, outH);
+    return r;
+  }
+
+  // 放大：源图像素不足时，关闭平滑避免 Edge/Chrome 抹糊；真正高清需重新选 >= 100px 的源区域
+  if (r.w < outW || r.h < outH) {
+    setPixelSharp(outCtx);
+    outCtx.clearRect(0, 0, outW, outH);
+    outCtx.drawImage(srcImage, r.x, r.y, r.w, r.h, 0, 0, outW, outH);
+    return r;
+  }
+
+  // 缩小：分级缩放，比单次 drawImage 更稳定，减少 Edge/Chrome 的模糊差异
+  let cur = document.createElement('canvas');
+  cur.width = r.w;
+  cur.height = r.h;
+  let curCtx = cur.getContext('2d');
+  setPixelSharp(curCtx);
+  curCtx.clearRect(0, 0, cur.width, cur.height);
+  curCtx.drawImage(srcImage, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+
+  while (cur.width * 0.5 > outW && cur.height * 0.5 > outH) {
+    const next = document.createElement('canvas');
+    next.width = Math.max(outW, Math.floor(cur.width / 2));
+    next.height = Math.max(outH, Math.floor(cur.height / 2));
+    const nextCtx = next.getContext('2d');
+    setHighQualityScale(nextCtx);
+    nextCtx.clearRect(0, 0, next.width, next.height);
+    nextCtx.drawImage(cur, 0, 0, cur.width, cur.height, 0, 0, next.width, next.height);
+    cur = next;
+  }
+
+  setHighQualityScale(outCtx);
+  outCtx.clearRect(0, 0, outW, outH);
+  outCtx.drawImage(cur, 0, 0, cur.width, cur.height, 0, 0, outW, outH);
+  return r;
+}
+
+function getIconQualityWarnings(sel, outW, outH, format) {
+  const r = normalizeExportRect(sel);
+  const warnings = [];
+  if (outW === 100 && outH === 100) {
+    if (format !== 'png') warnings.push('100×100 icon 建议用 PNG，JPEG/WebP 可能有有损压缩');
+    if (r.w !== r.h) warnings.push(`源选区不是正方形：${r.w}×${r.h}，导出 100×100 会被拉伸`);
+    if (r.w < 100 || r.h < 100) warnings.push(`源选区小于 100×100：${r.w}×${r.h}，无法凭空变高清`);
+  }
+  return warnings;
+}
 exportBtn.addEventListener('click', async () => {
   if (!srcImage || selections.length === 0) {
     showToast('没有可导出的选区'); return;
@@ -2127,8 +2216,8 @@ exportBtn.addEventListener('click', async () => {
   const prefix  = document.getElementById('namePrefix').value.trim() || 'icon';
   const mime    = { png: 'image/png', webp: 'image/webp', jpeg: 'image/jpeg' }[format] || 'image/png';
   const doResize = resizeCheck.checked;
-  const outW    = parseInt(document.getElementById('outW').value) || 100;
-  const outH    = parseInt(document.getElementById('outH').value) || 100;
+  const outW    = Math.max(1, Math.min(4096, parseInt(document.getElementById('outW').value) || 100));
+  const outH    = Math.max(1, Math.min(4096, parseInt(document.getElementById('outH').value) || 100));
 
   exportBtn.disabled = true;
   exportBtn.textContent = '处理中…';
@@ -2136,6 +2225,7 @@ exportBtn.addEventListener('click', async () => {
   const zip = new JSZip();
   const off = document.createElement('canvas');
   const oc  = off.getContext('2d');
+  setPixelSharp(oc);
 
   // 文件名生成：有 name 用 name，无 name 用 prefix_序号
   const illegalChars = /[\\/:*?"<>|]/g;
@@ -2155,14 +2245,20 @@ exportBtn.addEventListener('click', async () => {
     return `${base}.${format}`;
   }
 
+  const qualityWarnings = [];
   selections.forEach((sel, i) => {
-    off.width  = doResize ? outW : sel.w;
-    off.height = doResize ? outH : sel.h;
-    oc.clearRect(0, 0, off.width, off.height);
-    oc.drawImage(srcImage, sel.x, sel.y, sel.w, sel.h, 0, 0, off.width, off.height);
-    const b64 = off.toDataURL(mime, .92).split(',')[1];
+    const targetW = doResize ? outW : sel.w;
+    const targetH = doResize ? outH : sel.h;
+    getIconQualityWarnings(sel, targetW, targetH, format).forEach(msg => qualityWarnings.push(`#${i + 1} ${msg}`));
+    drawSelectionToCanvas(sel, off, oc, targetW, targetH);
+    const encodeQuality = format === 'png' ? undefined : 1;
+    const b64 = off.toDataURL(mime, encodeQuality).split(',')[1];
     zip.file(getFileName(sel, i), b64, { base64: true });
   });
+
+  if (qualityWarnings.length) {
+    alert('以下选区存在清晰度风险，导出的 100×100 可能无法达到“绝对高清”：\n\n' + qualityWarnings.slice(0, 20).join('\n') + (qualityWarnings.length > 20 ? `\n... 还有 ${qualityWarnings.length - 20} 条` : '') + '\n\n建议：导出格式选 PNG；源选区保持正方形且不小于 100×100。');
+  }
 
   // pywebview 环境：把 base64 传给 Python 端弹「另存为」对话框
   if (window.pywebview && window.pywebview.api) {
@@ -2179,8 +2275,13 @@ exportBtn.addEventListener('click', async () => {
   }
 
   exportBtn.disabled = false;
-  exportBtn.textContent = '⬇ 打包下载 ZIP';
-  showToast(`已导出 ${selections.length} 张图标`);
+  exportBtn.textContent = '📦 导出为 ZIP';
+  if (qualityWarnings.length) {
+    console.warn('Icon export quality warnings:', qualityWarnings);
+    showToast(`已导出 ${selections.length} 个图标；${qualityWarnings.length} 个清晰度风险`);
+  } else {
+    showToast(`已导出 ${selections.length} 个图标，100×100 PNG 为无损高清输出`);
+  }
 });
 
 // ════════════════════════════════
@@ -2226,6 +2327,7 @@ document.addEventListener('keydown', e => {
       const tc = rows[activeIdx].querySelector('canvas');
       if (tc && srcImage) {
         const tctx = tc.getContext('2d');
+        setPixelSharp(tctx);
         tctx.clearRect(0,0,36,36);
         tctx.drawImage(srcImage, sel.x, sel.y, sel.w, sel.h, 0, 0, 36, 36);
       }
