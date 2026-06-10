@@ -1042,6 +1042,9 @@ select {
       <button class="btn btn-primary" id="exportBtn" style="margin-top:14px;" disabled>
         ⬇ 打包下载 ZIP
       </button>
+      <button class="btn btn-secondary" id="exportAnnotatedBtn" style="margin-top:8px;" disabled>
+        🖼️ 导出标注图
+      </button>
     </div>
 
   </aside>
@@ -1248,6 +1251,7 @@ function loadFile(file) {
     render();
     updateSelList();
     exportBtn.disabled  = false;
+    exportAnnotatedBtn.disabled = false;
     addManualBtn.disabled = false;
     imgInfo.style.display = '';
     imgInfo.innerHTML = `<strong>${img.width} × ${img.height} px</strong> &nbsp;${file.name || ''}`;
@@ -1525,6 +1529,7 @@ function updateSelList() {
   clearSelBtn.disabled = selections.length === 0;
   sqMaxBtn.disabled    = selections.length === 0;
   sqMinBtn.disabled    = selections.length === 0;
+  exportAnnotatedBtn.disabled = selections.length === 0;
   document.getElementById('autoMatchBtn').disabled = selections.length === 0;
 
   if (selections.length === 0) {
@@ -2282,6 +2287,96 @@ exportBtn.addEventListener('click', async () => {
   } else {
     showToast(`已导出 ${selections.length} 个图标，100×100 PNG 为无损高清输出`);
   }
+});
+
+// ════════════════════════════════
+// EXPORT ANNOTATED (标注图导出)
+// ════════════════════════════════
+const exportAnnotatedBtn = document.getElementById('exportAnnotatedBtn');
+
+exportAnnotatedBtn.addEventListener('click', () => {
+  if (!srcImage || selections.length === 0) {
+    showToast('没有可导出的选区'); return;
+  }
+
+  exportAnnotatedBtn.disabled = true;
+  exportAnnotatedBtn.textContent = '处理中…';
+
+  const annCanvas = document.createElement('canvas');
+  annCanvas.width = srcImage.width;
+  annCanvas.height = srcImage.height;
+  const ac = annCanvas.getContext('2d');
+
+  // 绘制原图
+  ac.drawImage(srcImage, 0, 0);
+
+  // 颜色循环（与截图中类似的多彩框选）
+  const colors = [
+    '#ff4444', '#44cc44', '#4488ff', '#ffaa00',
+    '#cc44ff', '#00cccc', '#ff66aa', '#88cc00'
+  ];
+
+  const lineWidth = Math.max(2, Math.round(Math.min(srcImage.width, srcImage.height) / 400));
+  const fontSize = Math.max(12, Math.round(Math.min(srcImage.width, srcImage.height) / 50));
+
+  selections.forEach((sel, i) => {
+    const color = colors[i % colors.length];
+    const r = normalizeExportRect(sel);
+
+    // 绘制矩形边框
+    ac.strokeStyle = color;
+    ac.lineWidth = lineWidth;
+    ac.strokeRect(r.x, r.y, r.w, r.h);
+
+    // 绘制编号/名称标签
+    const label = sel.name || `#${i + 1}`;
+    ac.font = `bold ${fontSize}px "Segoe UI", system-ui, sans-serif`;
+    const metrics = ac.measureText(label);
+    const labelW = metrics.width + fontSize * 0.6;
+    const labelH = fontSize * 1.4;
+
+    // 标签位置：优先放选区左上角上方，空间不够则放内部左上角
+    let lx = r.x;
+    let ly = r.y - labelH - 2;
+    if (ly < 0) { ly = r.y + 2; }
+
+    // 标签背景
+    ac.fillStyle = color;
+    ac.fillRect(lx, ly, labelW, labelH);
+
+    // 标签文字（白色）
+    ac.fillStyle = '#ffffff';
+    ac.textBaseline = 'middle';
+    ac.fillText(label, lx + fontSize * 0.3, ly + labelH / 2);
+  });
+
+  // 导出
+  annCanvas.toBlob(blob => {
+    if (!blob) { showToast('导出失败'); exportAnnotatedBtn.disabled = false; exportAnnotatedBtn.textContent = '🖼️ 导出标注图'; return; }
+
+    // pywebview 环境
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.save_file) {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const b64 = reader.result.split(',')[1];
+        await window.pywebview.api.save_file(b64, 'annotated_preview.png');
+        exportAnnotatedBtn.disabled = false;
+        exportAnnotatedBtn.textContent = '🖼️ 导出标注图';
+        showToast('标注图已保存');
+      };
+      reader.readAsDataURL(blob);
+    } else {
+      // 浏览器下载
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'annotated_preview.png';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      exportAnnotatedBtn.disabled = false;
+      exportAnnotatedBtn.textContent = '🖼️ 导出标注图';
+      showToast(`已导出标注图，含 ${selections.length} 个选区标注`);
+    }
+  }, 'image/png');
 });
 
 // ════════════════════════════════
