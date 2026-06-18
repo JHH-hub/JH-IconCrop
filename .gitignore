@@ -13,3 +13,6 @@ __pycache__/
 warn-*.txt
 xref-*.html
 base_library.zip
+
+# Nested local repo copy
+裁剪工具/
