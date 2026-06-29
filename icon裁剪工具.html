@@ -1040,7 +1040,7 @@ select {
       </div>
 
       <button class="btn btn-primary" id="exportBtn" style="margin-top:14px;" disabled>
-        ⬇ 打包下载 ZIP
+        📦 打包下载 ZIP
       </button>
       <button class="btn btn-secondary" id="exportAnnotatedBtn" style="margin-top:8px;" disabled>
         🖼️ 导出标注图
@@ -1083,6 +1083,7 @@ select {
           <button class="btn btn-primary" id="ocrParseBtn" title="截图/图片 OCR 识别（粘贴或选择文件，需内网）">📷 截图识别</button>
           <button class="btn btn-secondary" id="autoMatchBtn" title="用视觉模型识别选区缩略图，自动匹配/生成茬点名字" disabled>✨ 智能匹配</button>
           <button class="btn btn-warn" id="clearNamesBtn" title="清空所有选区的名字">清空名字</button>
+          <button class="btn btn-secondary" id="venusTokenBtn" title="配置 Venus 内网 Token（仅保存在本机，不会提交到仓库）">⚙ 配置 Token</button>
         </div>
         <input type="file" id="ocrFileInput" accept="image/*" style="display:none">
         <div class="np-tip" id="npTip">支持拖拽：可把下方名字 chip 拖到任意选区上命名 · 文本框聚焦时 Ctrl+V 可直接粘贴截图识别</div>
@@ -1701,8 +1702,40 @@ clearSelBtn.addEventListener('click', () => {
 // BATCH NAMING（批量命名）
 // ════════════════════════════════
 // Venus 代理（公司内网可用）
-const VENUS_TOKEN = 'DDqXI8Jegqb5jjvYtBbSFvfT@2187';
+// ⚠️ Token 不再硬编码进源码，改为保存在浏览器 localStorage（本地，不会提交到仓库）
 const VENUS_URL   = 'http://v2.open.venus.oa.com/llmproxy/chat/completions';
+const VENUS_TOKEN_KEY = 'iconCrop.venusToken';
+
+// 读取本地保存的 token
+function getVenusToken() {
+  try { return (localStorage.getItem(VENUS_TOKEN_KEY) || '').trim(); }
+  catch (_) { return ''; }
+}
+
+// 保存 token 到本地
+function setVenusToken(tok) {
+  try { localStorage.setItem(VENUS_TOKEN_KEY, (tok || '').trim()); }
+  catch (_) {}
+}
+
+// 弹窗让用户输入/修改 token（返回最新 token，取消则返回空串）
+function promptVenusToken() {
+  const cur = getVenusToken();
+  const tip = 'AI / OCR 功能需要 Venus 内网 Token（仅保存在本机浏览器，不会上传或提交到仓库）。\n请输入 Venus Token：';
+  const input = window.prompt(tip, cur);
+  if (input === null) return cur;            // 用户取消，保留原值
+  const tok = input.trim();
+  setVenusToken(tok);
+  if (tok) showToast('✅ Venus Token 已保存到本地');
+  return tok;
+}
+
+// 确保有 token，没有就弹窗索取；返回 token 或空串
+function ensureVenusToken() {
+  let tok = getVenusToken();
+  if (!tok) tok = promptVenusToken();
+  return tok;
+}
 // 文本模型 fallback 列表：按顺序尝试，遇 4030/模型下线自动切下一个
 // 2026-05 更新：hunyuan-turbo 已下线，主用 deepseek-v3
 const VENUS_TEXT_MODELS = ['deepseek-v3', 'hunyuan-pro', 'hunyuan-standard', 'gpt-4o-mini'];
@@ -1716,11 +1749,17 @@ document.getElementById('npHead').addEventListener('click', () => {
   document.getElementById('npToggle').textContent = panel.classList.contains('collapsed') ? '▶' : '▼';
 });
 
+// 配置 Token 按钮
+document.getElementById('venusTokenBtn').addEventListener('click', () => {
+  promptVenusToken();
+});
+
 
 // AI 解析
 document.getElementById('aiParseBtn').addEventListener('click', async () => {
   const raw = document.getElementById('nameRawText').value.trim();
   if (!raw) { showToast('请先粘贴茬点列表文本'); return; }
+  if (!ensureVenusToken()) { showToast('未配置 Venus Token，已取消'); return; }
   const btn = document.getElementById('aiParseBtn');
   btn.disabled = true;
   btn.textContent = '⏳ 解析中…';
@@ -1740,6 +1779,7 @@ document.getElementById('aiParseBtn').addEventListener('click', async () => {
 
 // ── OCR 截图识别 ──
 async function runOcrFromDataURL(dataUrl, sourceLabel = '截图') {
+  if (!ensureVenusToken()) { showToast('未配置 Venus Token，已取消'); return; }
   const btn = document.getElementById('ocrParseBtn');
   const orig = btn.textContent;
   btn.disabled = true;
@@ -1884,6 +1924,7 @@ async function autoMatchSelectionNames() {
     showToast('请先加载图片并添加选区');
     return;
   }
+  if (!ensureVenusToken()) { showToast('未配置 Venus Token，已取消'); return; }
   const btn = document.getElementById('autoMatchBtn');
   const orig = btn.textContent;
   const candidates = namePool.filter(n => !n.assigned).map(n => n.text);
@@ -1955,6 +1996,8 @@ document.getElementById('clearNamesBtn').addEventListener('click', () => {
 // timeoutMs: 单次请求超时
 // 返回 { content, model } —— 实际用到的模型也返回，方便日志
 async function callVenus(modelList, messages, timeoutMs = 30000) {
+  const token = getVenusToken();
+  if (!token) throw new Error('未配置 Venus Token，请先点「⚙ 配置 Token」填写');
   let lastErr = null;
   for (const model of modelList) {
     const ctrl = new AbortController();
@@ -1965,7 +2008,7 @@ async function callVenus(modelList, messages, timeoutMs = 30000) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${VENUS_TOKEN}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ model, messages }),
         signal: ctrl.signal
@@ -2280,7 +2323,7 @@ exportBtn.addEventListener('click', async () => {
   }
 
   exportBtn.disabled = false;
-  exportBtn.textContent = '📦 导出为 ZIP';
+  exportBtn.textContent = '📦 打包下载 ZIP';
   if (qualityWarnings.length) {
     console.warn('Icon export quality warnings:', qualityWarnings);
     showToast(`已导出 ${selections.length} 个图标；${qualityWarnings.length} 个清晰度风险`);
