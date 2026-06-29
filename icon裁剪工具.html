@@ -330,6 +330,25 @@ input[type="range"] { flex: 1; accent-color: #7c3aed; }
 }
 .sel-overlay:hover .sel-del { opacity: 1; }
 .sel-overlay .sel-del:hover { background: #ef4444; }
+/* 激活选区可整体拖动 */
+.sel-overlay.active { cursor: move; }
+/* 8 个缩放手柄（仅激活选区显示）*/
+.sel-handle {
+  position: absolute;
+  width: 10px; height: 10px;
+  background: #fbbf24; border: 1px solid #1a1a26;
+  border-radius: 2px; z-index: 11;
+  display: none;
+}
+.sel-overlay.active .sel-handle { display: block; }
+.sel-handle.nw { top: -5px;  left: -5px;  cursor: nwse-resize; }
+.sel-handle.n  { top: -5px;  left: 50%;   margin-left: -5px; cursor: ns-resize; }
+.sel-handle.ne { top: -5px;  right: -5px; cursor: nesw-resize; }
+.sel-handle.e  { top: 50%;   right: -5px; margin-top: -5px;  cursor: ew-resize; }
+.sel-handle.se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.sel-handle.s  { bottom: -5px; left: 50%;  margin-left: -5px; cursor: ns-resize; }
+.sel-handle.sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.sel-handle.w  { top: 50%;   left: -5px;  margin-top: -5px;  cursor: ew-resize; }
 /* 微调提示 */
 #nudge-hint {
   position: fixed; bottom: 56px; right: 20px;
@@ -931,9 +950,9 @@ select {
   </div>
   <div class="hint">
     <span><kbd>Shift</kbd>+拖拽 = 正方形</span>
-    <span>点选区 + <kbd>←↑↓→</kbd> 微调</span>
-    <span><kbd>Alt</kbd>+方向 调大小</span>
-    <span><kbd>Tab</kbd> 切换 &nbsp;<kbd>Ctrl</kbd>+滚轮 缩放</span>
+    <span>选中后可<kbd>拖动</kbd>移动 / 拖<kbd>角点</kbd>缩放</span>
+    <span><kbd>←↑↓→</kbd> 微调 &nbsp;<kbd>Alt</kbd>+方向 调大小</span>
+    <span><kbd>Tab</kbd> 切换 &nbsp;<kbd>Ctrl</kbd>+滚轮 缩放 &nbsp;<kbd>Ctrl</kbd>+Z 撤销</span>
   </div>
 </header>
 
@@ -1129,6 +1148,33 @@ let isDragging = false;
 let dragStart  = null; // {ix,iy}
 let activeIdx  = -1;   // 当前激活的选区索引，-1=无
 
+// ── 撤销栈（快照式）──
+// 每次结构性变更（增/删/移动/缩放/正方形化）前后压入 selections 的深拷贝快照
+let undoStack = [];
+const UNDO_LIMIT = 50;
+function snapshotSelections() {
+  return selections.map(s => ({ x: s.x, y: s.y, w: s.w, h: s.h, name: s.name || '' }));
+}
+function pushHistory() {
+  undoStack.push(snapshotSelections());
+  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+}
+function undo() {
+  if (undoStack.length === 0) { showToast('没有可撤销的操作'); return; }
+  selections = undoStack.pop();
+  if (activeIdx >= selections.length) activeIdx = selections.length - 1;
+  updateSelList();
+  drawSelections();
+  showToast('已撤销');
+}
+// 连续微调（方向键/拖动）合并为一次撤销：800ms 内的连续操作只记录第一次
+let _nudgeHistoryTimer = null;
+function beginNudgeHistory() {
+  if (_nudgeHistoryTimer === null) pushHistory();
+  clearTimeout(_nudgeHistoryTimer);
+  _nudgeHistoryTimer = setTimeout(() => { _nudgeHistoryTimer = null; }, 800);
+}
+
 // ════════════════════════════════
 // DOM
 // ════════════════════════════════
@@ -1242,12 +1288,22 @@ document.addEventListener('paste', e => {
 });
 
 function loadFile(file) {
+  if (!file) { showToast('未读取到文件'); return; }
+  if (file.type && !file.type.startsWith('image/')) {
+    showToast('请选择图片文件（PNG / JPG / WebP 等）');
+    return;
+  }
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
-    srcImage = img;
     URL.revokeObjectURL(url);
+    if (!img.width || !img.height) {
+      showToast('图片尺寸异常，无法加载');
+      return;
+    }
+    srcImage = img;
     selections = [];
+    pushHistory();           // 加载新图作为撤销栈起点
     fitToWindow();
     render();
     updateSelList();
@@ -1257,6 +1313,10 @@ function loadFile(file) {
     imgInfo.style.display = '';
     imgInfo.innerHTML = `<strong>${img.width} × ${img.height} px</strong> &nbsp;${file.name || ''}`;
     showToast(`已加载：${img.width} × ${img.height} px`);
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    showToast('图片加载失败：文件可能已损坏或格式不受支持');
   };
   img.src = url;
 }
@@ -1316,12 +1376,14 @@ function drawSelections() {
     div.style.width  = Math.round(sel.w * zoom) + 'px';
     div.style.height = Math.round(sel.h * zoom) + 'px';
 
-    // 点击激活
+    // 点击激活 + 在激活选区内按下拖动整体移动
     div.style.pointerEvents = 'auto';
     div.addEventListener('mousedown', e => {
       e.stopPropagation();  // 阻止冒泡到 canvasWrap
       e.preventDefault();
-      setActive(i);
+      if (i !== activeIdx) { setActive(i); return; }
+      // 已激活：开始整体拖动
+      startMoveSelection(i, e);
     });
 
     // 编号
@@ -1338,6 +1400,7 @@ function drawSelections() {
     x.addEventListener('mousedown', e => {
       e.stopPropagation();   // 阻止冒泡到 canvasWrap，避免触发拖拽
       e.preventDefault();    // 阻止后续 click 事件
+      pushHistory();
       const wasActive = activeIdx === i;
       selections.splice(i, 1);
       if (wasActive) activeIdx = selections.length > 0 ? Math.min(i, selections.length - 1) : -1;
@@ -1348,8 +1411,87 @@ function drawSelections() {
     });
     div.appendChild(x);
 
+    // 8 个缩放手柄（仅激活选区可见，由 CSS 控制显隐）
+    if (i === activeIdx) {
+      ['nw','n','ne','e','se','s','sw','w'].forEach(dir => {
+        const hd = document.createElement('div');
+        hd.className = 'sel-handle ' + dir;
+        hd.addEventListener('mousedown', ev => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          startResizeSelection(i, dir, ev);
+        });
+        div.appendChild(hd);
+      });
+    }
+
     canvasWrap.appendChild(div);
   });
+}
+
+// ── 鼠标拖动整体移动选区 ──
+function startMoveSelection(idx, e) {
+  const sel = selections[idx];
+  const start = canvasToImg(e);
+  const orig = { x: sel.x, y: sel.y };
+  let moved = false;
+  function onMove(ev) {
+    const cur = canvasToImg(ev);
+    const dx = cur.ix - start.ix;
+    const dy = cur.iy - start.iy;
+    if (!moved && (dx !== 0 || dy !== 0)) { pushHistory(); moved = true; }
+    sel.x = Math.min(Math.max(0, orig.x + dx), srcImage.width  - sel.w);
+    sel.y = Math.min(Math.max(0, orig.y + dy), srcImage.height - sel.h);
+    setCoordInputs(sel.x, sel.y, sel.w, sel.h);
+    drawSelections();
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (moved) updateSelList();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// ── 鼠标拖动手柄缩放选区 ──
+function startResizeSelection(idx, dir, e) {
+  const sel = selections[idx];
+  const start = canvasToImg(e);
+  const orig = { x: sel.x, y: sel.y, w: sel.w, h: sel.h };
+  let resized = false;
+  function onMove(ev) {
+    const cur = canvasToImg(ev);
+    let dx = cur.ix - start.ix;
+    let dy = cur.iy - start.iy;
+    if (!resized && (dx !== 0 || dy !== 0)) { pushHistory(); resized = true; }
+    let { x, y, w, h } = orig;
+    // 横向
+    if (dir.includes('e')) w = Math.max(1, Math.min(orig.w + dx, srcImage.width - orig.x));
+    if (dir.includes('w')) {
+      const nx = Math.min(Math.max(0, orig.x + dx), orig.x + orig.w - 1);
+      w = orig.x + orig.w - nx;
+      x = nx;
+    }
+    // 纵向
+    if (dir.includes('s')) h = Math.max(1, Math.min(orig.h + dy, srcImage.height - orig.y));
+    if (dir.includes('n')) {
+      const ny = Math.min(Math.max(0, orig.y + dy), orig.y + orig.h - 1);
+      h = orig.y + orig.h - ny;
+      y = ny;
+    }
+    sel.x = Math.round(x); sel.y = Math.round(y);
+    sel.w = Math.round(w); sel.h = Math.round(h);
+    setCoordInputs(sel.x, sel.y, sel.w, sel.h);
+    drawSelections();
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (resized) updateSelList();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 function setActive(idx) {
@@ -1412,6 +1554,7 @@ document.addEventListener('mouseup', e => {
   const {x, y, w, h} = computeRect(dragStart, cur, e.shiftKey);
 
   if (w > 3 && h > 3) {
+    pushHistory();
     selections.push({x, y, w, h, name: ''});
     activeIdx = selections.length - 1;
     showToast(`已添加 #${selections.length}：${w}×${h}  — 方向键可微调`);
@@ -1422,14 +1565,10 @@ document.addEventListener('mouseup', e => {
   }
 });
 
-// right-click on canvas to undo last selection
+// right-click on canvas to undo (走撤销栈，可回退移动/删除/缩放等任意操作)
 canvasWrap.addEventListener('contextmenu', e => {
   e.preventDefault();
-  if (selections.length === 0) return;
-  selections.pop();
-  showToast('已撤销最后一个选区');
-  updateSelList();
-  drawSelections();
+  undo();
 });
 
 function computeRect(a, b, square) {
@@ -1491,6 +1630,7 @@ addManualBtn.addEventListener('click', () => {
   const y = parseInt(document.getElementById('manY').value) || 0;
   const w = parseInt(document.getElementById('manW').value) || 100;
   const h = parseInt(document.getElementById('manH').value) || 100;
+  pushHistory();
   selections.push({x, y, w, h, name: ''});
   showToast(`已添加 #${selections.length}：(${x},${y}) ${w}×${h}`);
   updateSelList();
@@ -1507,6 +1647,7 @@ sqMinBtn.addEventListener('click', () => squarify('min'));
 
 function squarify(mode) {
   if (selections.length === 0 || !srcImage) return;
+  pushHistory();
   selections = selections.map(sel => {
     const cx = sel.x + sel.w / 2;
     const cy = sel.y + sel.h / 2;
@@ -1674,6 +1815,7 @@ function updateSelList() {
     del.title = `删除选区 #${i+1}`;
     del.addEventListener('click', e => {
       e.stopPropagation();
+      pushHistory();
       const wasActive = activeIdx === i;
       selections.splice(i, 1);
       if (wasActive) activeIdx = selections.length > 0 ? Math.min(i, selections.length - 1) : -1;
@@ -1693,6 +1835,7 @@ function updateSelList() {
 
 clearSelBtn.addEventListener('click', () => {
   if (!confirm('确认清空所有选区？')) return;
+  pushHistory();
   selections = [];
   updateSelList();
   drawSelections();
@@ -1705,6 +1848,9 @@ clearSelBtn.addEventListener('click', () => {
 // ⚠️ Token 不再硬编码进源码，改为保存在浏览器 localStorage（本地，不会提交到仓库）
 const VENUS_URL   = 'http://v2.open.venus.oa.com/llmproxy/chat/completions';
 const VENUS_TOKEN_KEY = 'iconCrop.venusToken';
+
+// AI 并发锁：避免「粘贴自动解析」与「手动点按钮」同时发起重复请求
+let isAiBusy = false;
 
 // 读取本地保存的 token
 function getVenusToken() {
@@ -1757,10 +1903,12 @@ document.getElementById('venusTokenBtn').addEventListener('click', () => {
 
 // AI 解析
 document.getElementById('aiParseBtn').addEventListener('click', async () => {
+  if (isAiBusy) { showToast('AI 正在处理中，请稍候…'); return; }
   const raw = document.getElementById('nameRawText').value.trim();
   if (!raw) { showToast('请先粘贴茬点列表文本'); return; }
   if (!ensureVenusToken()) { showToast('未配置 Venus Token，已取消'); return; }
   const btn = document.getElementById('aiParseBtn');
+  isAiBusy = true;
   btn.disabled = true;
   btn.textContent = '⏳ 解析中…';
   try {
@@ -1772,6 +1920,7 @@ document.getElementById('aiParseBtn').addEventListener('click', async () => {
     showToast('AI 解析失败：' + (err.message || '请检查内网连接'));
     console.error('[AI Parse]', err);
   } finally {
+    isAiBusy = false;
     btn.disabled = false;
     btn.textContent = '🤖 AI 解析';
   }
@@ -1779,9 +1928,11 @@ document.getElementById('aiParseBtn').addEventListener('click', async () => {
 
 // ── OCR 截图识别 ──
 async function runOcrFromDataURL(dataUrl, sourceLabel = '截图') {
+  if (isAiBusy) { showToast('AI 正在处理中，请稍候…'); return; }
   if (!ensureVenusToken()) { showToast('未配置 Venus Token，已取消'); return; }
   const btn = document.getElementById('ocrParseBtn');
   const orig = btn.textContent;
+  isAiBusy = true;
   btn.disabled = true;
   btn.textContent = '⏳ 识别中…';
   try {
@@ -1796,6 +1947,7 @@ async function runOcrFromDataURL(dataUrl, sourceLabel = '截图') {
     showToast('识别失败：' + (err.message || '请检查内网连接'));
     console.error('[OCR]', err);
   } finally {
+    isAiBusy = false;
     btn.disabled = false;
     btn.textContent = orig;
   }
@@ -1849,6 +2001,7 @@ document.getElementById('nameRawText').addEventListener('paste', async (e) => {
   // 粘贴的是文本 → 等文本粘进 textarea 后自动 AI 解析
   // 用 setTimeout 0 等 paste 默认行为完成
   setTimeout(async () => {
+    if (isAiBusy) return;  // 已有 AI 请求在跑，避免重复
     const textarea = document.getElementById('nameRawText');
     const raw = textarea.value.trim();
     if (!raw || raw.length < 2) return;
@@ -1859,6 +2012,7 @@ document.getElementById('nameRawText').addEventListener('paste', async (e) => {
 
     // 触发 AI 解析
     const btn = document.getElementById('aiParseBtn');
+    isAiBusy = true;
     btn.disabled = true;
     btn.textContent = '⏳ 解析中…';
     showToast('检测到粘贴内容，自动 AI 解析中…');
@@ -1874,6 +2028,7 @@ document.getElementById('nameRawText').addEventListener('paste', async (e) => {
       console.warn('[Auto Parse] AI failed:', err);
       showToast('解析失败：' + (err.message || '请检查内网连接'));
     } finally {
+      isAiBusy = false;
       btn.disabled = false;
       btn.textContent = '🤖 AI 解析';
     }
@@ -1924,10 +2079,12 @@ async function autoMatchSelectionNames() {
     showToast('请先加载图片并添加选区');
     return;
   }
+  if (isAiBusy) { showToast('AI 正在处理中，请稍候…'); return; }
   if (!ensureVenusToken()) { showToast('未配置 Venus Token，已取消'); return; }
   const btn = document.getElementById('autoMatchBtn');
   const orig = btn.textContent;
   const candidates = namePool.filter(n => !n.assigned).map(n => n.text);
+  isAiBusy = true;
   btn.disabled = true;
   btn.textContent = '⏳ 匹配中…';
   try {
@@ -1973,6 +2130,7 @@ async function autoMatchSelectionNames() {
     console.error('[Auto Match]', err);
     showToast('智能匹配失败：' + (err.message || '请检查内网连接'));
   } finally {
+    isAiBusy = false;
     btn.disabled = selections.length === 0;
     btn.textContent = orig;
   }
@@ -2248,6 +2406,10 @@ function drawSelectionToCanvas(sel, outCanvas, outCtx, outW, outH) {
 function getIconQualityWarnings(sel, outW, outH, format) {
   const r = normalizeExportRect(sel);
   const warnings = [];
+  // JPEG 不支持透明通道：精灵图常带透明背景，导出 JPEG 会把透明区填成黑色
+  if (format === 'jpeg') {
+    warnings.push('JPEG 不支持透明背景，透明区域会变成黑色，建议改用 PNG / WebP');
+  }
   if (outW === 100 && outH === 100) {
     if (format !== 'png') warnings.push('100×100 icon 建议用 PNG，JPEG/WebP 可能有有损压缩');
     if (r.w !== r.h) warnings.push(`源选区不是正方形：${r.w}×${r.h}，导出 100×100 会被拉伸`);
@@ -2437,6 +2599,8 @@ document.addEventListener('keydown', e => {
   if (ARROW_KEYS.includes(e.key) && activeIdx >= 0 && activeIdx < selections.length) {
     // 避免页面滚动
     e.preventDefault();
+    // 连续微调合并为一次快照：首次按下/停顿后再次按下时记录，800ms 内连续按键不重复记录
+    beginNudgeHistory();
     const sel  = selections[activeIdx];
     const step = e.shiftKey ? 10 : 1;
     const isAlt = e.altKey;
@@ -2489,7 +2653,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (activeIdx >= 0) {
       activeIdx = -1; drawSelections(); updateSelList();
-    } else {
+    } else if (selections.length) {
+      pushHistory();
       selections = []; updateSelList(); drawSelections();
       showToast('已清空选区');
     }
@@ -2497,10 +2662,7 @@ document.addEventListener('keydown', e => {
   }
   if ((e.ctrlKey||e.metaKey) && e.key === 'z') {
     e.preventDefault();
-    if (selections.length) {
-      if (activeIdx === selections.length - 1) activeIdx = selections.length - 2;
-      selections.pop(); updateSelList(); drawSelections(); showToast('撤销');
-    }
+    undo();
     return;
   }
   if (e.key === '+' || e.key === '=') { zoomSlider.value = Math.min(400, +zoomSlider.value + 10); applyZoom(); }
@@ -2584,6 +2746,16 @@ window.addEventListener('DOMContentLoaded', () => {
     if (ai >= 0 && ai < sels.length) {
       const s = sels[ai];
       sbActive.textContent = '#' + (ai+1) + '  ' + s.x + ',' + s.y + '  ' + s.w + '×' + s.h;
+    } else {
+      sbActive.textContent = '—';
+    }
+  };
+})();
+</script>
+
+</body>
+</html>
+ + (ai+1) + '  ' + s.x + ',' + s.y + '  ' + s.w + '×' + s.h;
     } else {
       sbActive.textContent = '—';
     }

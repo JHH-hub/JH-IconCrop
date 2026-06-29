@@ -20,18 +20,10 @@ if errorlevel 1 (
 echo [2/4] 清理旧的构建产物 ...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
-if exist "Icon裁剪工具.spec" del /q "Icon裁剪工具.spec"
 
 echo [3/4] 开始打包（会花十几秒到一分钟）...
-python -m PyInstaller ^
-    --noconfirm ^
-    --clean ^
-    --onefile ^
-    --noconsole ^
-    --name "Icon裁剪工具" ^
-    --icon "裁剪.ico" ^
-    --add-data "icon裁剪工具.html;." ^
-    launcher.py
+REM 直接使用版本受控的 .spec 文件打包，保证配置唯一、可复现
+python -m PyInstaller --noconfirm --clean "Icon裁剪工具.spec"
 
 if errorlevel 1 (
     echo [ERROR] 打包失败
